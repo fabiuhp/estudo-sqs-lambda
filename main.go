@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 
@@ -23,24 +22,30 @@ type Payload struct {
 	} `json:"data"`
 }
 
-func handler(ctx context.Context, sqsEvent events.SQSEvent) error {
+var logger *zap.Logger
+
+func initLogger() (*zap.Logger, error) {
 	logger, err := zap.NewProduction()
 	if err != nil {
-		logger.Error("Erro ao inicializar o logger: %v", err)
+		return nil, fmt.Errorf("erro ao inicializar o logger: %v", err)
 	}
-	defer logger.Sync()
+	return logger, nil
+}
 
+func handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	for _, message := range sqsEvent.Records {
 		var payload Payload
 
 		if err := json.Unmarshal([]byte(message.Body), &payload); err != nil {
-			log.Printf("Error unmarshaling message body: %s", err)
+			logger.Error("Error unmarshaling message body", zap.Error(err))
 			continue
 		}
 
+		logger.Info("Processing message", zap.String("id", payload.Id), zap.String("status", payload.Status), zap.String("action", payload.Action))
+
 		if payload.Status == "approved" {
 			if err := sendToLoadBalancer(payload); err != nil {
-				log.Printf("Error sending to load balancer: %s", err)
+				logger.Error("Error sending to load balancer", zap.Error(err))
 			}
 		}
 	}
@@ -81,5 +86,13 @@ func sendToLoadBalancer(payload Payload) error {
 }
 
 func main() {
+	var err error
+	logger, err = initLogger()
+	if err != nil {
+		fmt.Printf("Error initializing logger: %v\n", err)
+		return
+	}
+	defer logger.Sync()
+
 	lambda.Start(handler)
 }
